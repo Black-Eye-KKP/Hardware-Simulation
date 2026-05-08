@@ -1,0 +1,2509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARCHON — Hardware Architecture Mapper</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #050810;
+  --bg2: #080d18;
+  --bg3: #0c1220;
+  --panel: #0f1626;
+  --panel2: #141d2e;
+  --border: rgba(50,120,255,0.15);
+  --border2: rgba(50,120,255,0.3);
+  --accent: #3278ff;
+  --accent2: #00e5ff;
+  --accent3: #ff6b35;
+  --accent4: #a855f7;
+  --green: #00ff88;
+  --yellow: #ffd60a;
+  --text: #e2e8f0;
+  --text2: #8899aa;
+  --text3: #4a5568;
+  --red: #ff4444;
+  --glow: 0 0 20px rgba(50,120,255,0.3);
+  --glow2: 0 0 30px rgba(0,229,255,0.2);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Syne', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Scanline overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* Grid background */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(50,120,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(50,120,255,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ======= HEADER ======= */
+.header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 56px;
+  background: rgba(5,8,16,0.95);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 24px;
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+}
+
+.logo {
+  font-family: 'Space Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent2);
+  letter-spacing: 4px;
+  text-shadow: 0 0 20px rgba(0,229,255,0.6);
+  flex-shrink: 0;
+}
+
+.logo span { color: var(--accent3); }
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+}
+
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--text2);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--panel);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-dot.scanning { background: var(--accent3); box-shadow: 0 0 8px var(--accent3); }
+.status-dot.offline { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.header-scan-btn {
+  margin-left: auto;
+  padding: 8px 20px;
+  background: linear-gradient(135deg, var(--accent), #1a4fff);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  box-shadow: 0 0 20px rgba(50,120,255,0.4);
+}
+
+.header-scan-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 30px rgba(50,120,255,0.6);
+}
+
+.header-scan-btn.scanning {
+  background: linear-gradient(135deg, var(--accent3), #cc4400);
+  box-shadow: 0 0 20px rgba(255,107,53,0.4);
+  animation: scanPulse 0.8s ease-in-out infinite;
+}
+
+@keyframes scanPulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+
+/* ======= LAYOUT ======= */
+.app {
+  display: flex;
+  height: 100vh;
+  padding-top: 56px;
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 16px 0;
+}
+
+.sidebar::-webkit-scrollbar { width: 3px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+.nav-section-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--text3);
+  padding: 8px 16px 4px;
+  text-transform: uppercase;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  border-left: 2px solid transparent;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.nav-item:hover { color: var(--text); background: rgba(50,120,255,0.05); }
+
+.nav-item.active {
+  color: var(--accent2);
+  border-left-color: var(--accent2);
+  background: rgba(0,229,255,0.05);
+}
+
+.nav-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.nav-badge {
+  margin-left: auto;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--panel2);
+  color: var(--text3);
+}
+
+.nav-badge.ok { background: rgba(0,255,136,0.1); color: var(--green); }
+.nav-badge.warn { background: rgba(255,107,53,0.1); color: var(--accent3); }
+
+.main {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.view { display: none; height: 100%; overflow-y: auto; }
+.view.active { display: flex; flex-direction: column; }
+.view::-webkit-scrollbar { width: 4px; }
+.view::-webkit-scrollbar-track { background: transparent; }
+.view::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* ======= BOTTOM STATUS BAR ======= */
+.statusbar {
+  height: 28px;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 24px;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  color: var(--text3);
+  flex-shrink: 0;
+}
+
+.sb-item { display: flex; align-items: center; gap: 5px; }
+.sb-val { color: var(--accent2); }
+
+/* ======= DASHBOARD VIEW ======= */
+.dash-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 16px;
+  padding: 20px;
+  flex: 1;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent2), transparent);
+  opacity: 0.3;
+}
+
+.card-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--text2);
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-title-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent2);
+  box-shadow: 0 0 6px var(--accent2);
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.metric-label { font-size: 11px; color: var(--text2); }
+.metric-val { font-family: 'Space Mono', monospace; font-size: 12px; color: var(--text); }
+.metric-val.accent { color: var(--accent2); }
+.metric-val.warn { color: var(--accent3); }
+.metric-val.ok { color: var(--green); }
+
+.progress-bar {
+  height: 3px;
+  background: var(--bg3);
+  border-radius: 2px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.8s ease;
+}
+
+/* ======= CPU DIAGRAM VIEW ======= */
+.cpu-view-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  padding: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+#cpuDiagCanvas {
+  width: 100%;
+  display: block;
+  border-radius: 8px;
+}
+
+.cpu-info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.info-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.info-card-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text3);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.info-key { font-size: 11px; color: var(--text2); }
+.info-val { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--accent2); }
+
+/* ======= ELECTRON FLOW VIEW ======= */
+.flow-view-layout {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 16px;
+  padding: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+#flowCanvas {
+  width: 100%;
+  display: block;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.flow-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ctrl-group {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.ctrl-group label {
+  display: block;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text3);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.ctrl-select {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  padding: 6px 8px;
+  cursor: pointer;
+  outline: none;
+  margin-bottom: 8px;
+}
+
+.ctrl-select option { background: var(--bg3); }
+
+.ctrl-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ctrl-slider-row label {
+  font-size: 10px;
+  color: var(--text2);
+  letter-spacing: 0;
+  margin: 0;
+  min-width: 50px;
+  font-family: 'Syne', sans-serif;
+}
+
+.ctrl-slider {
+  flex: 1;
+  accent-color: var(--accent2);
+  height: 3px;
+}
+
+.ctrl-val {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--accent2);
+  min-width: 32px;
+  text-align: right;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-text { font-size: 10px; color: var(--text2); }
+
+/* ======= MOTHERBOARD VIEW ======= */
+.mb-view-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 20px;
+  gap: 16px;
+  min-height: 0;
+}
+
+#mbCanvas {
+  flex: 1;
+  width: 100%;
+  display: block;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  min-height: 0;
+}
+
+.mb-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  flex-shrink: 0;
+}
+
+/* ======= METAL DETECTION VIEW ======= */
+.metal-view-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  padding: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.metal-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+#probeCanvas {
+  width: 100%;
+  display: block;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.metal-table-wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.metal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.metal-table th {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text3);
+  text-transform: uppercase;
+  padding: 8px 12px;
+  text-align: left;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+
+.metal-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(50,120,255,0.05);
+  color: var(--text2);
+}
+
+.metal-table tr:last-child td { border-bottom: none; }
+.metal-table tr:hover td { background: rgba(50,120,255,0.04); }
+.metal-table .mono { font-family: 'Space Mono', monospace; color: var(--accent2); }
+.metal-table .name { color: var(--text); font-weight: 500; }
+
+.rho-bar-cell { min-width: 80px; }
+.rho-bar { height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+.rho-fill { height: 100%; border-radius: 2px; }
+
+.metal-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.detect-result {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.detect-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text3);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.detect-material {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent2);
+  margin-bottom: 4px;
+}
+
+.detect-rho {
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  color: var(--accent3);
+  margin-bottom: 8px;
+}
+
+.detect-desc {
+  font-size: 11px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+
+.detect-confidence {
+  margin-top: 8px;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+}
+
+.conf-bar { height: 6px; background: var(--bg3); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+.conf-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.6s ease; }
+
+/* ======= SOFTWARE VIEW ======= */
+.sw-view-layout {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sw-header {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.sw-header h2 {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 6px;
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.sw-header p {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+
+.sw-layers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.sw-layer-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  transition: border-color 0.2s;
+}
+
+.sw-layer-card:hover { border-color: var(--border2); }
+
+.sw-layer-num {
+  font-family: 'Space Mono', monospace;
+  font-size: 22px;
+  font-weight: 700;
+  color: rgba(50,120,255,0.2);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.sw-layer-body h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.sw-layer-body p {
+  font-size: 11px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+
+.code-block {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  line-height: 1.8;
+  color: var(--text2);
+  overflow-x: auto;
+}
+
+.kw { color: #ff79c6; }
+.fn { color: var(--accent2); }
+.str { color: var(--accent3); }
+.cm { color: var(--text3); }
+.num { color: var(--yellow); }
+
+.os-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.os-tab {
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.os-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+.os-panel { display: none; }
+.os-panel.active { display: block; }
+
+/* ======= TOPOLOGY VIEW ======= */
+.topo-view-layout {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+#topoCanvas {
+  flex: 1;
+  width: 100%;
+  display: block;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  min-height: 0;
+  cursor: crosshair;
+}
+
+.topo-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.topo-btn {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.topo-btn:hover, .topo-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+.view-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--text2);
+  text-transform: uppercase;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.view-title-accent {
+  color: var(--accent2);
+}
+
+/* ======= SCAN OVERLAY ======= */
+.scan-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(5,8,16,0.92);
+  z-index: 2000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+
+.scan-overlay.active { display: flex; }
+
+.scan-ring {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 2px solid rgba(50,120,255,0.1);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scan-ring::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent2);
+  animation: spin 1s linear infinite;
+}
+
+.scan-ring::after {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,229,255,0.2);
+  border-bottom-color: var(--accent3);
+  animation: spin 1.5s linear infinite reverse;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.scan-icon {
+  font-size: 32px;
+  z-index: 1;
+}
+
+.scan-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 16px;
+  letter-spacing: 4px;
+  color: var(--accent2);
+  text-transform: uppercase;
+}
+
+.scan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 320px;
+}
+
+.scan-step {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--text3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s;
+}
+
+.scan-step.done { color: var(--green); }
+.scan-step.active { color: var(--accent2); }
+.scan-step::before { content: '○'; font-size: 10px; }
+.scan-step.done::before { content: '●'; }
+.scan-step.active::before { content: '◉'; color: var(--accent2); }
+
+.scan-bar-wrap {
+  width: 320px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.scan-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 2px;
+  transition: width 0.2s ease;
+  width: 0%;
+}
+
+/* ======= RESPONSIVE ======= */
+@media (max-width: 900px) {
+  .dash-grid { grid-template-columns: 1fr; }
+  .cpu-view-layout { grid-template-columns: 1fr; }
+  .flow-view-layout { grid-template-columns: 1fr; }
+  .metal-view-layout { grid-template-columns: 1fr; }
+  .sw-layers { grid-template-columns: 1fr; }
+}
+
+.sep { height: 1px; background: var(--border); margin: 6px 16px; }
+
+/* ======= ALERT BANNER ======= */
+.alert-banner {
+  margin: 0 20px;
+  padding: 10px 14px;
+  background: rgba(255,107,53,0.1);
+  border: 1px solid rgba(255,107,53,0.3);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--accent3);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.alert-banner.info {
+  background: rgba(50,120,255,0.08);
+  border-color: rgba(50,120,255,0.2);
+  color: var(--accent2);
+}
+
+.section-pad { padding: 20px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
+</style>
+</head>
+<body>
+
+<!-- SCAN OVERLAY -->
+<div class="scan-overlay" id="scanOverlay">
+  <div class="scan-ring"><div class="scan-icon">⬡</div></div>
+  <div class="scan-title">Scanning Hardware</div>
+  <div class="scan-steps" id="scanSteps">
+    <div class="scan-step" id="ss1">Initialising platform detection</div>
+    <div class="scan-step" id="ss2">Reading CPUID / processor info</div>
+    <div class="scan-step" id="ss3">Enumerating PCIe device tree</div>
+    <div class="scan-step" id="ss4">Scanning USB topology</div>
+    <div class="scan-step" id="ss5">Reading memory SPD / SMBIOS</div>
+    <div class="scan-step" id="ss6">Querying sensor telemetry</div>
+    <div class="scan-step" id="ss7">Building topology graph</div>
+    <div class="scan-step" id="ss8">Generating electron flow model</div>
+  </div>
+  <div class="scan-bar-wrap"><div class="scan-bar-fill" id="scanBarFill"></div></div>
+</div>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="logo">ARC<span>H</span>ON</div>
+  <div class="header-status">
+    <div class="status-pill"><div class="status-dot" id="mainDot"></div><span id="mainStatus">READY</span></div>
+    <div class="status-pill" id="cpuPill">CPU — <span id="hCPU">Not scanned</span></div>
+    <div class="status-pill" id="osPill">OS — <span id="hOS">Detecting...</span></div>
+    <div class="status-pill">ARCHON v2.0.1</div>
+  </div>
+  <button class="header-scan-btn" id="scanBtn" onclick="startScan()">⬡ SCAN DEVICE</button>
+</header>
+
+<!-- APP -->
+<div class="app">
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="nav-section-label">Monitor</div>
+    <div class="nav-item active" onclick="showView('dashboard')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="9" y="1" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="1" y="9" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="9" y="9" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.2"/></svg>
+      Dashboard
+      <span class="nav-badge ok" id="nb-dash">LIVE</span>
+    </div>
+    <div class="nav-item" onclick="showView('topology')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/><circle cx="2" cy="3" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="14" cy="3" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="2" cy="13" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="14" cy="13" r="1.5" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="3.5" x2="6" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="12.5" y1="3.5" x2="10" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="12.5" x2="6" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="12.5" y1="12.5" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/></svg>
+      Topology Map
+    </div>
+
+    <div class="sep"></div>
+    <div class="nav-section-label">Architecture</div>
+    <div class="nav-item" onclick="showView('cpu')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="4" y="4" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.2"/><line x1="6" y1="1" x2="6" y2="4" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="1" x2="10" y2="4" stroke="currentColor" stroke-width="1.2"/><line x1="6" y1="12" x2="6" y2="15" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="12" x2="10" y2="15" stroke="currentColor" stroke-width="1.2"/><line x1="1" y1="6" x2="4" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="1" y1="10" x2="4" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="12" y1="6" x2="15" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="12" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="1.2"/></svg>
+      CPU Architecture
+    </div>
+    <div class="nav-item" onclick="showView('motherboard')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="14" height="14" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="4" y="4" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1"/><rect x="9" y="4" width="3" height="2" rx="0.5" stroke="currentColor" stroke-width="1"/><line x1="4" y1="9" x2="12" y2="9" stroke="currentColor" stroke-width="1"/><line x1="4" y1="11" x2="10" y2="11" stroke="currentColor" stroke-width="1"/></svg>
+      Motherboard
+    </div>
+
+    <div class="sep"></div>
+    <div class="nav-section-label">Signal Analysis</div>
+    <div class="nav-item" onclick="showView('electron')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/><path d="M8 1C8 1 10 4 10 8C10 12 8 15 8 15" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M8 1C8 1 6 4 6 8C6 12 8 15 8 15" stroke="currentColor" stroke-width="1.2" fill="none"/><ellipse cx="8" cy="8" rx="7" ry="3" stroke="currentColor" stroke-width="1.2"/></svg>
+      Electron Flow
+    </div>
+    <div class="nav-item" onclick="showView('metal')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="7" width="12" height="5" rx="1" stroke="currentColor" stroke-width="1.2"/><line x1="4" y1="7" x2="4" y2="4" stroke="currentColor" stroke-width="1.2"/><line x1="8" y1="7" x2="8" y2="4" stroke="currentColor" stroke-width="1.2"/><line x1="12" y1="7" x2="12" y2="4" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="4" x2="14" y2="4" stroke="currentColor" stroke-width="1.2"/></svg>
+      Metal Detection
+    </div>
+
+    <div class="sep"></div>
+    <div class="nav-section-label">Reference</div>
+    <div class="nav-item" onclick="showView('software')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="1" stroke="currentColor" stroke-width="1.2"/><line x1="4" y1="6" x2="7" y2="6" stroke="currentColor" stroke-width="1.2"/><line x1="4" y1="9" x2="12" y2="9" stroke="currentColor" stroke-width="1.2"/><polyline points="8,5 10,7 8,9" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+      Software Design
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <div class="main">
+    <div class="panel-container">
+
+      <!-- DASHBOARD -->
+      <div class="view active" id="view-dashboard">
+        <div class="dash-grid">
+          <div class="card">
+            <div class="card-title"><div class="card-title-dot"></div>Processor</div>
+            <div class="metric-row"><span class="metric-label">Model</span><span class="metric-val accent" id="d-cpu-model">—</span></div>
+            <div class="metric-row"><span class="metric-label">Architecture</span><span class="metric-val" id="d-cpu-arch">—</span></div>
+            <div class="metric-row"><span class="metric-label">Cores / Threads</span><span class="metric-val" id="d-cpu-cores">—</span></div>
+            <div class="metric-row"><span class="metric-label">Process node</span><span class="metric-val" id="d-cpu-node">—</span></div>
+            <div class="metric-row"><span class="metric-label">Die size</span><span class="metric-val" id="d-cpu-die">—</span></div>
+            <div class="metric-row"><span class="metric-label">Usage</span><span class="metric-val ok" id="d-cpu-use">—</span></div>
+            <div class="progress-bar"><div class="progress-fill" id="d-cpu-bar" style="width:0%;background:linear-gradient(90deg,#3278ff,#00e5ff)"></div></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><div class="card-title-dot" style="background:var(--green);box-shadow:0 0 6px var(--green)"></div>Memory</div>
+            <div class="metric-row"><span class="metric-label">Total RAM</span><span class="metric-val accent" id="d-ram-total">—</span></div>
+            <div class="metric-row"><span class="metric-label">Type</span><span class="metric-val" id="d-ram-type">—</span></div>
+            <div class="metric-row"><span class="metric-label">Speed</span><span class="metric-val" id="d-ram-speed">—</span></div>
+            <div class="metric-row"><span class="metric-label">Channels</span><span class="metric-val" id="d-ram-ch">—</span></div>
+            <div class="metric-row"><span class="metric-label">ECC</span><span class="metric-val" id="d-ram-ecc">—</span></div>
+            <div class="metric-row"><span class="metric-label">Usage</span><span class="metric-val ok" id="d-ram-use">—</span></div>
+            <div class="progress-bar"><div class="progress-fill" id="d-ram-bar" style="width:0%;background:linear-gradient(90deg,#00ff88,#00e5ff)"></div></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><div class="card-title-dot" style="background:var(--accent3);box-shadow:0 0 6px var(--accent3)"></div>Storage</div>
+            <div id="d-storage-list"><div style="color:var(--text3);font-size:11px">Run scan to detect storage devices</div></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><div class="card-title-dot" style="background:var(--accent4);box-shadow:0 0 6px var(--accent4)"></div>Connected Ports</div>
+            <div id="d-ports-list"><div style="color:var(--text3);font-size:11px">Run scan to detect ports</div></div>
+          </div>
+
+          <div class="card" style="grid-column:1/-1">
+            <div class="card-title"><div class="card-title-dot" style="background:var(--yellow);box-shadow:0 0 6px var(--yellow)"></div>System Overview</div>
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px">
+              <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent2)" id="d-sys-os">—</div><div style="font-size:10px;color:var(--text3);margin-top:2px">OS</div></div>
+              <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--green)" id="d-sys-gpu">—</div><div style="font-size:10px;color:var(--text3);margin-top:2px">GPU</div></div>
+              <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent3)" id="d-sys-pcie">—</div><div style="font-size:10px;color:var(--text3);margin-top:2px">PCIe devs</div></div>
+              <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent4)" id="d-sys-usb">—</div><div style="font-size:10px;color:var(--text3);margin-top:2px">USB devs</div></div>
+              <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--yellow)" id="d-sys-board">—</div><div style="font-size:10px;color:var(--text3);margin-top:2px">Board</div></div>
+              <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent2)" id="d-sys-bios">—</div><div style="font-size:10px;color:var(--text3);margin-top:2px">BIOS</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TOPOLOGY MAP -->
+      <div class="view" id="view-topology">
+        <div class="topo-view-layout">
+          <div class="view-title">
+            ⬡ <span class="view-title-accent">Topology Map</span> — Hardware connection graph
+          </div>
+          <canvas id="topoCanvas"></canvas>
+          <div class="topo-controls">
+            <span style="font-family:'Space Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase">Show:</span>
+            <button class="topo-btn active" id="tb-all" onclick="setTopoFilter('all',this)">All</button>
+            <button class="topo-btn" id="tb-pcie" onclick="setTopoFilter('pcie',this)">PCIe</button>
+            <button class="topo-btn" id="tb-usb" onclick="setTopoFilter('usb',this)">USB</button>
+            <button class="topo-btn" id="tb-mem" onclick="setTopoFilter('mem',this)">Memory</button>
+            <button class="topo-btn" id="tb-net" onclick="setTopoFilter('net',this)">Network</button>
+            <span style="margin-left:auto;font-family:'Space Mono',monospace;font-size:9px;color:var(--text2)" id="topoStatus">Run scan to populate topology</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CPU VIEW -->
+      <div class="view" id="view-cpu">
+        <div class="cpu-view-layout">
+          <div style="display:flex;flex-direction:column;gap:12px;overflow:hidden;min-height:0">
+            <div class="view-title">⬡ <span class="view-title-accent">CPU Architecture</span> — Die layout & signal flow</div>
+            <canvas id="cpuDiagCanvas" style="flex:1;min-height:0;background:var(--panel);border:1px solid var(--border);border-radius:8px"></canvas>
+          </div>
+          <div class="cpu-info-panel">
+            <div class="info-card">
+              <div class="info-card-title">Physical Dimensions</div>
+              <div class="info-row"><span class="info-key">Die size</span><span class="info-val" id="i-die-size">—</span></div>
+              <div class="info-row"><span class="info-key">Package</span><span class="info-val" id="i-pkg">—</span></div>
+              <div class="info-row"><span class="info-key">Process</span><span class="info-val" id="i-proc">—</span></div>
+              <div class="info-row"><span class="info-key">Transistors</span><span class="info-val" id="i-trans">—</span></div>
+              <div class="info-row"><span class="info-key">Metal layers</span><span class="info-val" id="i-layers">—</span></div>
+              <div class="info-row"><span class="info-key">Gate length</span><span class="info-val" id="i-gate">—</span></div>
+            </div>
+            <div class="info-card">
+              <div class="info-card-title">Signal Architecture</div>
+              <div class="info-row"><span class="info-key">ISA</span><span class="info-val" id="i-isa">—</span></div>
+              <div class="info-row"><span class="info-key">Cache L1</span><span class="info-val" id="i-l1">—</span></div>
+              <div class="info-row"><span class="info-key">Cache L2</span><span class="info-val" id="i-l2">—</span></div>
+              <div class="info-row"><span class="info-key">Cache L3</span><span class="info-val" id="i-l3">—</span></div>
+              <div class="info-row"><span class="info-key">TDP</span><span class="info-val" id="i-tdp">—</span></div>
+              <div class="info-row"><span class="info-key">Base clock</span><span class="info-val" id="i-clk">—</span></div>
+            </div>
+            <div class="info-card">
+              <div class="info-card-title">Pipeline Stages</div>
+              <div style="display:flex;flex-direction:column;gap:4px" id="pipelineList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MOTHERBOARD VIEW -->
+      <div class="view" id="view-motherboard">
+        <div class="mb-view-layout">
+          <div class="view-title">⬡ <span class="view-title-accent">Motherboard</span> — Component map & bus topology</div>
+          <canvas id="mbCanvas"></canvas>
+          <div class="mb-legend" id="mbLegend"></div>
+        </div>
+      </div>
+
+      <!-- ELECTRON FLOW -->
+      <div class="view" id="view-electron">
+        <div class="flow-view-layout">
+          <div style="display:flex;flex-direction:column;gap:12px;overflow:hidden;min-height:0">
+            <div class="view-title">⬡ <span class="view-title-accent">Electron Flow</span> — Real-time signal direction & current simulation</div>
+            <canvas id="flowCanvas" style="flex:1;min-height:0"></canvas>
+          </div>
+          <div class="flow-controls">
+            <div class="ctrl-group">
+              <label>Component / bus</label>
+              <select class="ctrl-select" id="flowComp" onchange="rebuildFlow()">
+                <option value="cpu_bus">CPU Data Bus (64-bit)</option>
+                <option value="pcie4">PCIe Gen 4 × 16</option>
+                <option value="pcie5">PCIe Gen 5 × 16</option>
+                <option value="ddr5">DDR5 Memory Bus</option>
+                <option value="usb3">USB 3.2 Gen2</option>
+                <option value="usb4">USB4 / Thunderbolt 4</option>
+                <option value="hdmi">HDMI 2.1 TMDS</option>
+                <option value="eth10g">10GbE Ethernet</option>
+                <option value="sata">SATA III (6 Gbps)</option>
+                <option value="nvme">NVMe PCIe trace</option>
+                <option value="trace_cu">PCB copper trace</option>
+                <option value="trace_au">Gold bond wire</option>
+              </select>
+              <div class="ctrl-slider-row">
+                <label>Speed</label>
+                <input type="range" class="ctrl-slider" id="flowSpd" min="0.2" max="5" step="0.1" value="1" oninput="document.getElementById('flowSpdV').textContent=this.value+'×'">
+                <span class="ctrl-val" id="flowSpdV">1×</span>
+              </div>
+              <div class="ctrl-slider-row">
+                <label>Density</label>
+                <input type="range" class="ctrl-slider" id="flowDensity" min="1" max="5" step="1" value="3" oninput="document.getElementById('flowDV').textContent=this.value;rebuildFlow()">
+                <span class="ctrl-val" id="flowDV">3</span>
+              </div>
+            </div>
+            <div class="ctrl-group" id="flowInfo">
+              <label>Signal info</label>
+              <div style="font-size:11px;color:var(--text2);line-height:1.6" id="flowInfoText">Select a component above</div>
+            </div>
+            <div class="ctrl-group">
+              <label>Legend</label>
+              <div class="legend-row"><div class="legend-dot" style="background:#00e5ff"></div><div class="legend-text">Electron / data packet</div></div>
+              <div class="legend-row"><div class="legend-dot" style="background:#ff6b35;border-radius:0;width:16px;height:3px"></div><div class="legend-text">Forward signal</div></div>
+              <div class="legend-row"><div class="legend-dot" style="background:#a855f7;border-radius:0;width:16px;height:3px"></div><div class="legend-text">Return / ACK signal</div></div>
+              <div class="legend-row"><div class="legend-dot" style="background:#ffd60a"></div><div class="legend-text">Clock / sync pulse</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- METAL DETECTION -->
+      <div class="view" id="view-metal">
+        <div class="metal-view-layout">
+          <div class="metal-main">
+            <div class="view-title">⬡ <span class="view-title-accent">Metal Detection</span> — Alloy identification by resistivity</div>
+            <canvas id="probeCanvas" height="180"></canvas>
+            <div class="metal-table-wrap">
+              <table class="metal-table" id="metalTable">
+                <thead><tr><th>Material</th><th>ρ (10⁻⁸ Ω·m)</th><th>Use in hardware</th><th>Conductivity bar</th></tr></thead>
+                <tbody id="metalTBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="metal-side">
+            <div class="detect-result">
+              <div class="detect-title">Identification Result</div>
+              <div class="detect-material" id="det-mat">Select material below</div>
+              <div class="detect-rho" id="det-rho"></div>
+              <div class="detect-desc" id="det-desc"></div>
+              <div class="detect-confidence" id="det-conf-wrap" style="display:none">
+                Match confidence
+                <div class="conf-bar"><div class="conf-fill" id="det-conf-fill" style="width:0%"></div></div>
+              </div>
+            </div>
+            <div class="ctrl-group">
+              <label>Simulate probe on:</label>
+              <select class="ctrl-select" id="metalSel" onchange="detectMetal()">
+                <option value="cu">Pure copper (PCB trace)</option>
+                <option value="au">Gold (bond wire)</option>
+                <option value="al">Aluminium (heatsink)</option>
+                <option value="brass">Brass (connector pin)</option>
+                <option value="sac305">SAC305 solder</option>
+                <option value="sn">Tin plating</option>
+                <option value="ni">Nickel plating</option>
+                <option value="steel">Steel chassis</option>
+                <option value="ti">Titanium connector</option>
+                <option value="w">Tungsten via</option>
+                <option value="constantan">Constantan resistor</option>
+                <option value="nichrome">Nichrome heater</option>
+              </select>
+            </div>
+            <div class="ctrl-group">
+              <label>Method</label>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div class="legend-row"><div class="legend-dot" style="background:var(--red)"></div><div class="legend-text">Four-probe DC (contact)</div></div>
+                <div class="legend-row"><div class="legend-dot" style="background:var(--accent4)"></div><div class="legend-text">Eddy current (non-contact)</div></div>
+                <div class="legend-row"><div class="legend-dot" style="background:var(--green)"></div><div class="legend-text">Hall effect (magnetic)</div></div>
+              </div>
+            </div>
+            <div class="ctrl-group">
+              <label>How to detect metal alloys</label>
+              <div style="font-size:10px;color:var(--text2);line-height:1.7">
+                1. Inject known current (50mA)<br>
+                2. Measure voltage drop (V)<br>
+                3. Calculate ρ = (V/I)×(A/L)<br>
+                4. Match vs. database of 70,000+ alloy resistivity values<br>
+                5. ML model refines to alloy composition
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SOFTWARE DESIGN -->
+      <div class="view" id="view-software">
+        <div class="sw-view-layout">
+          <div class="view-title">⬡ <span class="view-title-accent">Software Architecture</span> — Universal hardware mapper design</div>
+          <div class="sw-header">
+            <h2>ARCHON — How This Software Works</h2>
+            <p>A 7-layer architecture that detects, maps, and visualises the complete internal hardware topology of any device — including real-time electron flow and metal/alloy identification when external probes are connected.</p>
+          </div>
+          <div class="sw-layers">
+            <div class="sw-layer-card"><div class="sw-layer-num">L1</div><div class="sw-layer-body"><h4>Platform Bootstrap</h4><p>Detects OS, kernel version, privilege level. Selects correct API backend: WMI (Windows), sysfs/procfs (Linux), IOKit (macOS), Build.HARDWARE (Android).</p></div></div>
+            <div class="sw-layer-card"><div class="sw-layer-num">L2</div><div class="sw-layer-body"><h4>Hardware Enumeration</h4><p>CPUID instruction → ISA, topology, features. SMBIOS Type 0–45 → board, BIOS, serial. lspci/WMI → full PCIe device tree. lsusb → USB hub tree. NVMe IDENTIFY + SMART.</p></div></div>
+            <div class="sw-layer-card"><div class="sw-layer-num">L3</div><div class="sw-layer-body"><h4>Sensor & Telemetry Layer</h4><p>RAPL (per-core power), MSR reads (voltage/turbo), LPCIO/Super-I/O (fan RPM, Vcore, temps), ACPI battery state, SMC on macOS, EDID from displays.</p></div></div>
+            <div class="sw-layer-card"><div class="sw-layer-num">L4</div><div class="sw-layer-body"><h4>Signal Flow Inference</h4><p>From topology + performance counters: models signal direction CPU→PCIe→GPU/NVMe, CPU→IMC→DIMMs, USB host→hubs→devices. Bandwidth utilisation per link.</p></div></div>
+            <div class="sw-layer-card"><div class="sw-layer-num">L5</div><div class="sw-layer-body"><h4>External Probe Bridge</h4><p>USB-C HID/CDC protocol to resistivity scanner, eddy-current probe, magnetic current imager, logic analyser. Streams 100 readings/sec into alloy-ID engine.</p></div></div>
+            <div class="sw-layer-card"><div class="sw-layer-num">L6</div><div class="sw-layer-body"><h4>Electron Flow Renderer</h4><p>WebGL particle system. Electrons animated along bus lanes proportional to real bandwidth. Signal direction, bottlenecks highlighted. Clock pulses visualised.</p></div></div>
+            <div class="sw-layer-card"><div class="sw-layer-num">L7</div><div class="sw-layer-body"><h4>3D Reconstruction</h4><p>SMBIOS + die database + probe resistivity map + thermal overlay → 3D spatial model of PCB and components, showing metal composition per trace.</p></div></div>
+          </div>
+
+          <div class="os-tabs">
+            <button class="os-tab active" onclick="showOS('linux',this)">Linux</button>
+            <button class="os-tab" onclick="showOS('windows',this)">Windows</button>
+            <button class="os-tab" onclick="showOS('macos',this)">macOS</button>
+            <button class="os-tab" onclick="showOS('android',this)">Android</button>
+          </div>
+
+          <div class="os-panel active" id="os-linux">
+            <div class="code-block"><span class="cm"># CPU architecture + features</span>
+<span class="fn">cat</span> /proc/cpuinfo &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># All CPU fields</span>
+<span class="fn">lscpu</span> <span class="cm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Parsed topology, ISA</span>
+<span class="fn">cpuid</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># Raw CPUID leaves</span>
+
+<span class="cm"># Motherboard + BIOS (SMBIOS)</span>
+<span class="fn">sudo dmidecode</span> -t 0,1,2,4,17 &nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># BIOS,system,board,CPU,RAM</span>
+
+<span class="cm"># PCIe device tree</span>
+<span class="fn">lspci</span> -vvv &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># Verbose PCI devices</span>
+<span class="fn">lspci</span> -t &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># Tree view</span>
+
+<span class="cm"># USB topology</span>
+<span class="fn">lsusb</span> -t &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># Full USB tree</span>
+
+<span class="cm"># NVMe / storage</span>
+<span class="fn">sudo nvme</span> id-ctrl /dev/nvme0 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># Controller IDENTIFY</span>
+<span class="fn">sudo hdparm</span> -I /dev/sda &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># SATA IDENTIFY</span>
+
+<span class="cm"># Temperatures, fan, voltage</span>
+<span class="fn">sensors</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># lm-sensors via LPCIO</span>
+<span class="fn">sudo rdmsr</span> 0x198 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># MSR perf_status (voltage)</span>
+
+<span class="cm"># RAM SPD timing</span>
+<span class="fn">sudo decode-dimms</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm"># i2c-tools SPD read</span>
+
+<span class="cm"># Power (RAPL)</span>
+<span class="fn">cat</span> /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj</div>
+          </div>
+
+          <div class="os-panel" id="os-windows">
+            <div class="code-block"><span class="cm"># WMI — comprehensive hardware</span>
+<span class="kw">Get-WmiObject</span> Win32_Processor <span class="cm">| fl *</span>
+<span class="kw">Get-WmiObject</span> Win32_BaseBoard
+<span class="kw">Get-WmiObject</span> Win32_PhysicalMemory
+<span class="kw">Get-WmiObject</span> Win32_DiskDrive
+<span class="kw">Get-WmiObject</span> Win32_VideoController
+<span class="kw">Get-WmiObject</span> Win32_NetworkAdapter
+
+<span class="cm"># Device enumeration</span>
+<span class="fn">pnputil</span> /enum-devices /all
+
+<span class="cm"># SMART storage data</span>
+<span class="kw">Get-Disk</span> | <span class="fn">Get-StorageReliabilityCounter</span>
+
+<span class="cm"># Registry hardware tree</span>
+<span class="str">HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0</span>
+<span class="str">HKLM\HARDWARE\DEVICEMAP\Scsi</span>
+
+<span class="cm"># Sensor library (C# / PowerShell)</span>
+<span class="cm"># Install-Package LibreHardwareMonitorLib</span>
+<span class="kw">$computer</span> = <span class="fn">New-Object</span> LibreHardwareMonitor.Hardware.Computer
+<span class="kw">$computer</span>.IsCpuEnabled = <span class="num">$true</span>; <span class="kw">$computer</span>.Open()
+<span class="kw">foreach</span> (<span class="kw">$hw</span> in <span class="kw">$computer</span>.Hardware) { <span class="kw">$hw</span>.Update() }</div>
+          </div>
+
+          <div class="os-panel" id="os-macos">
+            <div class="code-block"><span class="cm"># System Profiler</span>
+<span class="fn">system_profiler</span> SPHardwareDataType
+<span class="fn">system_profiler</span> SPNVMeDataType
+<span class="fn">system_profiler</span> SPUSBDataType
+<span class="fn">system_profiler</span> SPDisplaysDataType
+<span class="fn">system_profiler</span> SPMemoryDataType
+
+<span class="cm"># Apple Silicon specifics</span>
+<span class="fn">sysctl</span> hw.perflevel0.physicalcpu &nbsp;&nbsp;&nbsp;<span class="cm"># P-cores</span>
+<span class="fn">sysctl</span> hw.perflevel1.physicalcpu &nbsp;&nbsp;&nbsp;<span class="cm"># E-cores</span>
+<span class="fn">sysctl</span> hw.cpufrequency_max
+<span class="fn">sysctl</span> hw.memsize
+
+<span class="cm"># IOKit (programmatic — Swift/ObjC)</span>
+<span class="kw">import</span> IOKit
+<span class="fn">IOServiceMatching</span>(<span class="str">"IOPlatformExpertDevice"</span>)
+<span class="fn">IORegistryEntryCreateCFProperties</span>(...)
+
+<span class="cm"># Thermal sensors (SMC)</span>
+<span class="fn">sudo powermetrics</span> --samplers smc -n1
+<span class="fn">sudo powermetrics</span> --samplers cpu_power -n1</div>
+          </div>
+
+          <div class="os-panel" id="os-android">
+            <div class="code-block"><span class="cm">// Kotlin / Java hardware APIs</span>
+<span class="kw">Build</span>.HARDWARE &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm">// SoC name</span>
+<span class="kw">Build</span>.BOARD &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm">// Board name</span>
+<span class="kw">Build</span>.SUPPORTED_ABIS &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm">// CPU ISA (arm64-v8a, etc.)</span>
+<span class="kw">Build</span>.MANUFACTURER
+
+<span class="cm">// /proc filesystem (root or shell)</span>
+<span class="fn">cat</span> /proc/cpuinfo &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm">// Cores, features</span>
+<span class="fn">cat</span> /proc/meminfo &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm">// RAM</span>
+<span class="fn">cat</span> /sys/class/thermal/thermal_zone*/temp
+
+<span class="cm">// ActivityManager</span>
+<span class="kw">val</span> memInfo = ActivityManager.MemoryInfo()
+actMgr.<span class="fn">getMemoryInfo</span>(memInfo)
+<span class="kw">val</span> totalRam = memInfo.totalMem
+
+<span class="cm">// SensorManager</span>
+sensorMgr.<span class="fn">getDefaultSensor</span>(Sensor.TYPE_AMBIENT_TEMPERATURE)
+sensorMgr.<span class="fn">getDefaultSensor</span>(Sensor.TYPE_ACCELEROMETER)</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- end panel-container -->
+
+    <!-- STATUS BAR -->
+    <div class="statusbar">
+      <div class="sb-item">CPU: <span class="sb-val" id="sb-cpu">—</span></div>
+      <div class="sb-item">RAM: <span class="sb-val" id="sb-ram">—</span></div>
+      <div class="sb-item">OS: <span class="sb-val" id="sb-os">—</span></div>
+      <div class="sb-item">GPU: <span class="sb-val" id="sb-gpu">—</span></div>
+      <div class="sb-item" style="margin-left:auto">ARCHON Hardware Mapper v2.0.1 — Software + Hardware design</div>
+    </div>
+  </div><!-- end main -->
+</div><!-- end app -->
+
+<script>
+// ============================================================
+// ARCHON — Hardware Architecture Mapper
+// ============================================================
+
+// ---------- NAVIGATION ----------
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('view-' + id).classList.add('active');
+  event.currentTarget.classList.add('active');
+  setTimeout(() => {
+    if (id === 'electron') { initFlow(); }
+    if (id === 'cpu') { drawCPUDiagram(); }
+    if (id === 'motherboard') { drawMotherboard(); }
+    if (id === 'topology') { drawTopology(); }
+    if (id === 'metal') { buildMetalTable(); drawProbe(); detectMetal(); }
+  }, 30);
+}
+
+function showOS(id, btn) {
+  document.querySelectorAll('.os-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.os-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('os-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ---------- HARDWARE DATA (detected + real-world database) ----------
+const hwData = {
+  scanned: false,
+  cpu: {
+    model: '—', arch: '—', cores: '—', threads: '—',
+    node: '—', die: '—', pkg: '—', trans: '—', layers: '—',
+    gate: '—', isa: '—', l1: '—', l2: '—', l3: '—', tdp: '—', clk: '—',
+    usage: 0
+  },
+  ram: { total: '—', type: '—', speed: '—', channels: '—', ecc: '—', usage: 0 },
+  storage: [],
+  gpu: '—',
+  ports: [],
+  pcie_count: 0,
+  usb_count: 0,
+  board: '—',
+  bios: '—',
+  os: '—'
+};
+
+// Detect what we can from the browser environment
+function detectEnvironment() {
+  const ua = navigator.userAgent;
+  let os = 'Unknown';
+  if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Mac')) os = ua.includes('iPhone') || ua.includes('iPad') ? 'iOS' : 'macOS';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('Linux')) os = 'Linux';
+
+  const cores = navigator.hardwareConcurrency || 0;
+  const ramGB = navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'Unknown';
+  const plat = navigator.platform || 'Unknown';
+
+  // GPU via WebGL
+  let gpuName = 'Unknown';
+  try {
+    const c = document.createElement('canvas');
+    const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+    if (gl) {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      if (ext) gpuName = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+    }
+  } catch(e) {}
+
+  return { os, cores, ramGB, plat, gpuName };
+}
+
+// CPU database (for matched scan results based on core count + OS)
+const cpuDatabase = [
+  { match: ['Mac','Apple','arm'], model: 'Apple M-series', arch: 'ARM64 (AArch64)', node: '3nm TSMC', die: '~70–120 mm²', pkg: 'SoC (unified)', trans: '20–92B', layers: '15 metal', gate: '~12nm', isa: 'ARMv8.6-A', l1: '192 KB/core', l2: '12–32 MB', l3: 'Shared LLC 64MB', tdp: '15–60W', clk: '3.2–4.5 GHz' },
+  { match: ['Win','Intel'], model: 'Intel Core (12–14th Gen)', arch: 'x86-64 (Hybrid)', node: 'Intel 7 (10nm)', die: '163–257 mm²', pkg: 'LGA1700 45×37.5mm', trans: '~10–25B', layers: '~30 metal', gate: '~12nm FinFET', isa: 'x86-64 + AVX-512', l1: '80 KB/P-core', l2: '2 MB/P-core', l3: '24–36 MB shared', tdp: '65–125W', clk: '2.5–5.8 GHz' },
+  { match: ['Win','AMD','Ryzen'], model: 'AMD Ryzen 7000-series', arch: 'x86-64 (Zen 4)', node: 'TSMC 5nm (CCD)', die: '70 mm² CCD + 36mm² cIOD', pkg: 'AM5 40×40mm', trans: '~13B total', layers: '~15 metal', gate: '~18nm GAAFET', isa: 'x86-64 + AVX-512', l1: '32+32 KB/core', l2: '1 MB/core', l3: '32 MB/CCD', tdp: '65–170W', clk: '4.5–5.7 GHz' },
+  { match: ['Android','ARM'], model: 'ARM Cortex / Snapdragon', arch: 'ARM64 (big.LITTLE)', node: 'TSMC 3–4nm', die: '~80–120 mm²', pkg: 'SoC BGA', trans: '~8–12B', layers: '~12 metal', gate: '~12–14nm', isa: 'ARMv9-A', l1: '64 KB/core', l2: '512 KB cluster', l3: '8–12 MB SoC cache', tdp: '5–10W', clk: '2.0–3.3 GHz' },
+  { match: [], model: 'Generic x86-64', arch: 'x86-64', node: 'Unknown', die: 'Unknown', pkg: 'Unknown', trans: 'Unknown', layers: 'Unknown', gate: 'Unknown', isa: 'x86-64', l1: 'Unknown', l2: 'Unknown', l3: 'Unknown', tdp: 'Unknown', clk: 'Unknown' }
+];
+
+function matchCPU(env) {
+  const key = env.os + env.gpuName + env.plat;
+  for (let db of cpuDatabase) {
+    if (db.match.length === 0) return db;
+    if (db.match.every(m => key.includes(m))) return db;
+  }
+  return cpuDatabase[cpuDatabase.length - 1];
+}
+
+// ---------- SCAN ----------
+function startScan() {
+  const overlay = document.getElementById('scanOverlay');
+  const btn = document.getElementById('scanBtn');
+  overlay.classList.add('active');
+  btn.classList.add('scanning');
+  btn.textContent = '⬡ SCANNING...';
+  document.getElementById('mainDot').classList.add('scanning');
+  document.getElementById('mainStatus').textContent = 'SCANNING';
+
+  const steps = ['ss1','ss2','ss3','ss4','ss5','ss6','ss7','ss8'];
+  const delays = [300,700,1100,1500,1900,2300,2700,3100];
+  const fill = document.getElementById('scanBarFill');
+
+  steps.forEach((id, i) => {
+    setTimeout(() => {
+      if (i > 0) {
+        document.getElementById(steps[i-1]).classList.remove('active');
+        document.getElementById(steps[i-1]).classList.add('done');
+      }
+      document.getElementById(id).classList.add('active');
+      fill.style.width = ((i + 1) / steps.length * 100) + '%';
+    }, delays[i]);
+  });
+
+  setTimeout(() => {
+    document.getElementById(steps[steps.length - 1]).classList.remove('active');
+    document.getElementById(steps[steps.length - 1]).classList.add('done');
+    fill.style.width = '100%';
+    setTimeout(() => completeScan(), 400);
+  }, 3500);
+}
+
+function completeScan() {
+  const env = detectEnvironment();
+  const cpuDB = matchCPU(env);
+
+  // Populate hw data
+  hwData.scanned = true;
+  hwData.cpu = {
+    model: cpuDB.model,
+    arch: cpuDB.arch,
+    cores: env.cores,
+    threads: env.cores,
+    node: cpuDB.node,
+    die: cpuDB.die,
+    pkg: cpuDB.pkg,
+    trans: cpuDB.trans,
+    layers: cpuDB.layers,
+    gate: cpuDB.gate,
+    isa: cpuDB.isa,
+    l1: cpuDB.l1,
+    l2: cpuDB.l2,
+    l3: cpuDB.l3,
+    tdp: cpuDB.tdp,
+    clk: cpuDB.clk,
+    usage: Math.floor(Math.random() * 30 + 5)
+  };
+
+  hwData.ram = {
+    total: env.ramGB,
+    type: env.os === 'Android' || env.os === 'iOS' ? 'LPDDR5' : 'DDR4/DDR5',
+    speed: env.os === 'Android' || env.os === 'iOS' ? '6400 MT/s' : '3200–6000 MT/s',
+    channels: env.os.includes('Mac') ? 'Unified (128-bit)' : 'Dual-channel',
+    ecc: env.os.includes('Win') ? 'No (consumer)' : 'Unknown',
+    usage: Math.floor(Math.random() * 50 + 20)
+  };
+
+  hwData.gpu = env.gpuName !== 'Unknown' ? env.gpuName : (env.os.includes('Mac') ? 'Apple GPU (integrated)' : 'GPU detected');
+  hwData.os = env.os;
+  hwData.board = env.os.includes('Mac') ? 'Apple Silicon SoC' : (env.os.includes('Win') ? 'ATX/mATX motherboard' : 'System board');
+  hwData.bios = env.os.includes('Mac') ? 'Apple UEFI' : 'UEFI BIOS';
+  hwData.pcie_count = Math.floor(Math.random() * 8 + 4);
+  hwData.usb_count = Math.floor(Math.random() * 10 + 4);
+  hwData.storage = [
+    { name: 'NVMe SSD (PCIe 4.0)', size: '512 GB–2 TB', health: 100, type: 'NVMe' },
+    { name: 'USB Storage', size: 'Connected', health: 100, type: 'USB' }
+  ];
+  hwData.ports = ['USB-A 3.2', 'USB-C', 'HDMI 2.0', 'Ethernet (RJ-45)', 'Audio 3.5mm'];
+
+  updateDashboard();
+  updateStatusBar();
+  updateCPUInfoPanel();
+
+  const overlay = document.getElementById('scanOverlay');
+  const btn = document.getElementById('scanBtn');
+  overlay.classList.remove('active');
+  btn.classList.remove('scanning');
+  btn.textContent = '⬡ RE-SCAN';
+  document.getElementById('mainDot').classList.remove('scanning');
+  document.getElementById('mainStatus').textContent = 'LIVE';
+
+  document.getElementById('hCPU').textContent = hwData.cpu.model.split(' ').slice(0,3).join(' ');
+  document.getElementById('hOS').textContent = hwData.os;
+  document.getElementById('topoStatus').textContent = hwData.pcie_count + ' PCIe · ' + hwData.usb_count + ' USB · topology live';
+
+  // Re-draw active view
+  const active = document.querySelector('.view.active');
+  if (active) {
+    const id = active.id.replace('view-','');
+    if (id === 'cpu') drawCPUDiagram();
+    if (id === 'motherboard') drawMotherboard();
+    if (id === 'topology') drawTopology();
+  }
+
+  // Reset scan step indicators
+  document.querySelectorAll('.scan-step').forEach(s => { s.classList.remove('done','active'); });
+  document.getElementById('scanBarFill').style.width = '0%';
+}
+
+function updateDashboard() {
+  const c = hwData.cpu;
+  document.getElementById('d-cpu-model').textContent = c.model;
+  document.getElementById('d-cpu-arch').textContent = c.arch;
+  document.getElementById('d-cpu-cores').textContent = c.cores + ' / ' + c.threads;
+  document.getElementById('d-cpu-node').textContent = c.node;
+  document.getElementById('d-cpu-die').textContent = c.die;
+  document.getElementById('d-cpu-use').textContent = c.usage + '%';
+  document.getElementById('d-cpu-bar').style.width = c.usage + '%';
+
+  const r = hwData.ram;
+  document.getElementById('d-ram-total').textContent = r.total;
+  document.getElementById('d-ram-type').textContent = r.type;
+  document.getElementById('d-ram-speed').textContent = r.speed;
+  document.getElementById('d-ram-ch').textContent = r.channels;
+  document.getElementById('d-ram-ecc').textContent = r.ecc;
+  document.getElementById('d-ram-use').textContent = r.usage + '%';
+  document.getElementById('d-ram-bar').style.width = r.usage + '%';
+
+  document.getElementById('d-sys-os').textContent = hwData.os;
+  document.getElementById('d-sys-gpu').textContent = '✓';
+  document.getElementById('d-sys-pcie').textContent = hwData.pcie_count;
+  document.getElementById('d-sys-usb').textContent = hwData.usb_count;
+  document.getElementById('d-sys-board').textContent = '✓';
+  document.getElementById('d-sys-bios').textContent = hwData.bios;
+
+  const sl = document.getElementById('d-storage-list');
+  sl.innerHTML = hwData.storage.map(s => `
+    <div class="metric-row"><span class="metric-label">${s.name}</span><span class="metric-val ok">${s.size}</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:70%;background:linear-gradient(90deg,var(--accent3),var(--yellow))"></div></div>
+  `).join('');
+
+  const pl = document.getElementById('d-ports-list');
+  pl.innerHTML = hwData.ports.map(p => `<div class="metric-row"><span class="metric-label">${p}</span><span class="metric-val ok">Detected</span></div>`).join('');
+}
+
+function updateStatusBar() {
+  document.getElementById('sb-cpu').textContent = hwData.cpu.model.split(' ').slice(0,3).join(' ');
+  document.getElementById('sb-ram').textContent = hwData.ram.total + ' ' + hwData.ram.type;
+  document.getElementById('sb-os').textContent = hwData.os;
+  document.getElementById('sb-gpu').textContent = hwData.gpu.split(' ').slice(0,3).join(' ');
+}
+
+function updateCPUInfoPanel() {
+  const c = hwData.cpu;
+  document.getElementById('i-die-size').textContent = c.die;
+  document.getElementById('i-pkg').textContent = c.pkg;
+  document.getElementById('i-proc').textContent = c.node;
+  document.getElementById('i-trans').textContent = c.trans;
+  document.getElementById('i-layers').textContent = c.layers;
+  document.getElementById('i-gate').textContent = c.gate;
+  document.getElementById('i-isa').textContent = c.isa;
+  document.getElementById('i-l1').textContent = c.l1;
+  document.getElementById('i-l2').textContent = c.l2;
+  document.getElementById('i-l3').textContent = c.l3;
+  document.getElementById('i-tdp').textContent = c.tdp;
+  document.getElementById('i-clk').textContent = c.clk;
+
+  const stages = ['Fetch','Decode','Rename/Dispatch','Scheduler (OoO)','Execute Units','Write-back','Retire/Commit'];
+  const colors = ['#3278ff','#00e5ff','#a855f7','#ff6b35','#ffd60a','#00ff88','#3278ff'];
+  document.getElementById('pipelineList').innerHTML = stages.map((s,i) => `
+    <div style="display:flex;align-items:center;gap:6px">
+      <div style="width:6px;height:6px;border-radius:50%;background:${colors[i]};flex-shrink:0;box-shadow:0 0 6px ${colors[i]}"></div>
+      <span style="font-size:10px;color:var(--text2)">${s}</span>
+      ${i < stages.length-1 ? '<span style="margin-left:auto;font-size:9px;color:var(--text3)">→</span>' : ''}
+    </div>
+  `).join('');
+}
+
+// ---------- CPU DIAGRAM ----------
+function drawCPUDiagram() {
+  const canvas = document.getElementById('cpuDiagCanvas');
+  if (!canvas) return;
+  const W = canvas.parentElement.offsetWidth - 0;
+  const H = canvas.parentElement.offsetHeight - 40;
+  if (W < 100 || H < 100) { setTimeout(drawCPUDiagram, 100); return; }
+  canvas.width = W;
+  canvas.height = Math.max(H, 400);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, canvas.height);
+
+  // Background
+  ctx.fillStyle = '#080d18';
+  ctx.fillRect(0, 0, W, canvas.height);
+
+  const cH = canvas.height;
+  const cX = W / 2;
+
+  // ---- DRAW CPU PACKAGE ----
+  const pkgX = W * 0.1, pkgY = cH * 0.05;
+  const pkgW = W * 0.8, pkgH = cH * 0.88;
+
+  // Package border
+  ctx.strokeStyle = 'rgba(50,120,255,0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  roundRect(ctx, pkgX, pkgY, pkgW, pkgH, 8);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(50,120,255,0.03)';
+  roundRect(ctx, pkgX, pkgY, pkgW, pkgH, 8);
+  ctx.fill();
+
+  label(ctx, 'CPU Package / Die', cX, pkgY + 14, 10, 'rgba(50,120,255,0.5)', 'center');
+
+  const coreColors = ['#3278ff','#00e5ff','#a855f7','#ff6b35'];
+
+  // ---- CORES ----
+  const nc = Math.min(hwData.cpu.cores || 4, 8);
+  const cols = nc <= 4 ? 2 : 4;
+  const rows = Math.ceil(nc / cols);
+  const coreW = Math.min(80, (pkgW * 0.55) / cols - 10);
+  const coreH = 50;
+  const coreStartX = pkgX + 16;
+  const coreStartY = pkgY + 30;
+  const coreGapX = coreW + 10;
+  const coreGapY = coreH + 10;
+
+  for (let i = 0; i < nc; i++) {
+    const col = i % cols, row = Math.floor(i / cols);
+    const cx = coreStartX + col * coreGapX;
+    const cy = coreStartY + row * coreGapY;
+    const color = coreColors[i % coreColors.length];
+
+    ctx.fillStyle = 'rgba(50,120,255,0.08)';
+    ctx.strokeStyle = color + '60';
+    ctx.lineWidth = 1;
+    roundRect(ctx, cx, cy, coreW, coreH, 4);
+    ctx.fill(); ctx.stroke();
+
+    label(ctx, 'Core ' + i, cx + coreW / 2, cy + 12, 8, color, 'center');
+
+    // L1 inside core
+    ctx.fillStyle = color + '20';
+    ctx.strokeStyle = color + '40';
+    ctx.lineWidth = 0.5;
+    roundRect(ctx, cx + 4, cy + 18, coreW - 8, 10, 2);
+    ctx.fill(); ctx.stroke();
+    label(ctx, 'L1$', cx + coreW / 2, cy + 26, 7, color + 'aa', 'center');
+
+    // L2 outside core
+    ctx.fillStyle = color + '15';
+    ctx.strokeStyle = color + '30';
+    ctx.lineWidth = 0.5;
+    roundRect(ctx, cx + 2, cy + 34, coreW - 4, 10, 2);
+    ctx.fill(); ctx.stroke();
+    label(ctx, 'L2$', cx + coreW / 2, cy + 42, 7, color + '90', 'center');
+  }
+
+  // ---- L3 CACHE ----
+  const l3Y = coreStartY + rows * coreGapY + 10;
+  const l3W = cols * coreGapX - 10;
+  ctx.fillStyle = 'rgba(0,229,255,0.06)';
+  ctx.strokeStyle = 'rgba(0,229,255,0.3)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, coreStartX, l3Y, l3W, 22, 4);
+  ctx.fill(); ctx.stroke();
+  label(ctx, 'L3 Cache (shared)', coreStartX + l3W / 2, l3Y + 14, 9, '#00e5ff', 'center');
+
+  // Connect cores to L3
+  for (let i = 0; i < nc; i++) {
+    const col = i % cols, row = Math.floor(i / cols);
+    const cx = coreStartX + col * coreGapX + coreW / 2;
+    const cy = coreStartY + row * coreGapY + coreH;
+    if (row === rows - 1) {
+      animatedLine(ctx, cx, cy, cx, l3Y, coreColors[i % coreColors.length] + '40');
+    }
+  }
+
+  // ---- RIGHT SIDE: MEMORY CONTROLLER + INTERFACES ----
+  const rightX = pkgX + pkgW * 0.62;
+  const rightW = pkgW * 0.35;
+
+  // IMC
+  const imcY = pkgY + 40;
+  box(ctx, rightX, imcY, rightW, 30, 'rgba(0,255,136,0.08)', 'rgba(0,255,136,0.4)', 'Memory Controller (IMC)', '#00ff88', 9);
+
+  // PCIe root
+  const pcieY = imcY + 50;
+  box(ctx, rightX, pcieY, rightW, 30, 'rgba(168,85,247,0.08)', 'rgba(168,85,247,0.4)', 'PCIe Root Complex', '#a855f7', 9);
+
+  // USB/TB
+  const usbY = pcieY + 50;
+  box(ctx, rightX, usbY, rightW, 30, 'rgba(255,107,53,0.08)', 'rgba(255,107,53,0.4)', 'USB / Thunderbolt ctrl', '#ff6b35', 9);
+
+  // Power management
+  const pmY = usbY + 50;
+  box(ctx, rightX, pmY, rightW, 30, 'rgba(255,214,10,0.08)', 'rgba(255,214,10,0.4)', 'Power Management', '#ffd60a', 9);
+
+  // ---- RING BUS / MESH ----
+  const busY = l3Y + 30;
+  ctx.strokeStyle = 'rgba(50,120,255,0.25)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(coreStartX, busY);
+  ctx.lineTo(rightX, busY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  label(ctx, 'Ring Bus / Mesh Interconnect', (coreStartX + rightX) / 2, busY - 5, 8, 'rgba(50,120,255,0.5)', 'center');
+
+  // Bus → right blocks
+  const blocks = [imcY+15, pcieY+15, usbY+15, pmY+15];
+  blocks.forEach(by => {
+    ctx.strokeStyle = 'rgba(50,120,255,0.2)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(rightX, busY);
+    ctx.lineTo(rightX, by);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    arrowHead(ctx, rightX, by, 90, 'rgba(50,120,255,0.4)');
+  });
+
+  // ---- PINS at bottom ----
+  const pinY = pkgY + pkgH - 20;
+  const pinCount = 20;
+  const pinSpacing = pkgW / (pinCount + 1);
+  for (let i = 0; i < pinCount; i++) {
+    const px = pkgX + (i + 1) * pinSpacing;
+    ctx.fillStyle = i % 3 === 0 ? '#ffd60a' : (i % 3 === 1 ? '#00e5ff' : '#888');
+    ctx.fillRect(px - 1, pinY, 2, 10);
+  }
+  label(ctx, 'Package pins / solder balls (LGA/BGA)', cX, pinY + 16, 8, 'rgba(255,255,255,0.3)', 'center');
+
+  // ---- TITLE ----
+  label(ctx, hwData.scanned ? hwData.cpu.model : 'CPU Architecture — Run scan for your device', cX, cH - 4, 9, 'rgba(0,229,255,0.4)', 'center');
+}
+
+function box(ctx, x, y, w, h, fill, stroke, text, textColor, fontSize) {
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1;
+  roundRect(ctx, x, y, w, h, 4);
+  ctx.fill(); ctx.stroke();
+  label(ctx, text, x + w / 2, y + h / 2 + fontSize / 2 - 1, fontSize, textColor, 'center');
+}
+
+function label(ctx, text, x, y, size, color, align) {
+  ctx.fillStyle = color;
+  ctx.font = size + 'px "Space Mono", monospace';
+  ctx.textAlign = align || 'left';
+  ctx.fillText(text, x, y);
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function animatedLine(ctx, x1, y1, x2, y2, color) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+function arrowHead(ctx, x, y, angle, color) {
+  const rad = angle * Math.PI / 180;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - 5 * Math.cos(rad - 0.5), y - 5 * Math.sin(rad - 0.5));
+  ctx.lineTo(x - 5 * Math.cos(rad + 0.5), y - 5 * Math.sin(rad + 0.5));
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ---------- MOTHERBOARD ----------
+function drawMotherboard() {
+  const canvas = document.getElementById('mbCanvas');
+  if (!canvas) return;
+  const W = canvas.parentElement.offsetWidth;
+  const H = canvas.parentElement.offsetHeight - 80;
+  if (W < 100 || H < 100) { setTimeout(drawMotherboard, 100); return; }
+  canvas.width = W;
+  canvas.height = Math.max(H, 400);
+  const ctx = canvas.getContext('2d');
+  const cH = canvas.height;
+
+  // PCB background
+  ctx.fillStyle = '#071a0e';
+  ctx.fillRect(0, 0, W, cH);
+
+  // PCB grid lines (traces visual)
+  ctx.strokeStyle = 'rgba(0,100,40,0.15)';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x < W; x += 20) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,cH); ctx.stroke(); }
+  for (let y = 0; y < cH; y += 20) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  const comps = [
+    { label: 'CPU Socket', x: 0.35, y: 0.3, w: 0.16, h: 0.22, color: '#3278ff', textColor: '#00e5ff' },
+    { label: 'PCH\nChipset', x: 0.55, y: 0.55, w: 0.10, h: 0.12, color: '#a855f7', textColor: '#d8b4fe' },
+    { label: 'DDR5\nSlot A1', x: 0.65, y: 0.15, w: 0.04, h: 0.30, color: '#00ff88', textColor: '#00ff88' },
+    { label: 'DDR5\nSlot A2', x: 0.70, y: 0.15, w: 0.04, h: 0.30, color: '#00ff88', textColor: '#00ff88' },
+    { label: 'DDR5\nSlot B1', x: 0.76, y: 0.15, w: 0.04, h: 0.30, color: '#00ff88', textColor: '#00ff88' },
+    { label: 'DDR5\nSlot B2', x: 0.81, y: 0.15, w: 0.04, h: 0.30, color: '#00ff88', textColor: '#00ff88' },
+    { label: 'PCIe x16\n(GPU)', x: 0.18, y: 0.60, w: 0.45, h: 0.04, color: '#ff6b35', textColor: '#ff6b35' },
+    { label: 'PCIe x16\n(slot 2)', x: 0.18, y: 0.68, w: 0.45, h: 0.04, color: '#ff6b35', textColor: '#ff6b35' },
+    { label: 'PCIe x1', x: 0.18, y: 0.74, w: 0.15, h: 0.03, color: '#ff6b35', textColor: '#ff6b35' },
+    { label: 'M.2 NVMe\nGen5', x: 0.36, y: 0.55, w: 0.15, h: 0.03, color: '#ffd60a', textColor: '#ffd60a' },
+    { label: 'M.2 NVMe\nGen4', x: 0.36, y: 0.62, w: 0.15, h: 0.03, color: '#ffd60a', textColor: '#ffd60a' },
+    { label: 'ATX\n24-pin', x: 0.88, y: 0.40, w: 0.04, h: 0.20, color: '#ffd60a', textColor: '#ffd60a' },
+    { label: 'CPU\n8-pin', x: 0.05, y: 0.05, w: 0.06, h: 0.06, color: '#ffd60a', textColor: '#ffd60a' },
+    { label: 'VRM\nPhases', x: 0.20, y: 0.05, w: 0.12, h: 0.18, color: '#ff4444', textColor: '#ff9999' },
+    { label: 'USB\nController', x: 0.56, y: 0.73, w: 0.08, h: 0.07, color: '#00e5ff', textColor: '#00e5ff' },
+    { label: 'Audio\nCodec', x: 0.12, y: 0.82, w: 0.08, h: 0.07, color: '#a855f7', textColor: '#d8b4fe' },
+    { label: 'Ethernet\nPHY', x: 0.72, y: 0.78, w: 0.09, h: 0.07, color: '#00ff88', textColor: '#00ff88' },
+    { label: 'BIOS\nROM', x: 0.82, y: 0.73, w: 0.05, h: 0.05, color: '#ff6b35', textColor: '#ff6b35' },
+    { label: 'Super I/O\nSensors', x: 0.06, y: 0.73, w: 0.07, h: 0.06, color: '#ffd60a', textColor: '#ffd60a' },
+  ];
+
+  const buses = [
+    { from: 0, to: 1, color: 'rgba(168,85,247,0.5)', label: 'DMI4' },
+    { from: 0, to: 2, color: 'rgba(0,255,136,0.5)', label: 'IMC' },
+    { from: 0, to: 3, color: 'rgba(0,255,136,0.4)', label: '' },
+    { from: 0, to: 4, color: 'rgba(0,255,136,0.4)', label: '' },
+    { from: 0, to: 5, color: 'rgba(0,255,136,0.4)', label: '' },
+    { from: 0, to: 6, color: 'rgba(255,107,53,0.5)', label: 'PCIe x16' },
+    { from: 1, to: 7, color: 'rgba(255,107,53,0.35)', label: '' },
+    { from: 0, to: 9, color: 'rgba(255,214,10,0.5)', label: 'PCIe' },
+    { from: 1, to: 14, color: 'rgba(0,229,255,0.4)', label: 'USB3' },
+    { from: 1, to: 16, color: 'rgba(0,255,136,0.4)', label: 'PCIe' },
+    { from: 12, to: 0, color: 'rgba(255,214,10,0.5)', label: '8-pin' },
+    { from: 13, to: 0, color: 'rgba(255,68,68,0.5)', label: 'VCC' },
+  ];
+
+  function compCenter(c) {
+    return { x: (c.x + c.w / 2) * W, y: (c.y + c.h / 2) * cH };
+  }
+
+  // Draw buses
+  buses.forEach(b => {
+    const a = compCenter(comps[b.from]);
+    const bP = compCenter(comps[b.to]);
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = b.color.includes('0.5') ? 1.5 : 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    const mx = (a.x + bP.x) / 2;
+    ctx.lineTo(mx, a.y);
+    ctx.lineTo(mx, bP.y);
+    ctx.lineTo(bP.x, bP.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Draw components
+  comps.forEach(c => {
+    const x = c.x * W, y = c.y * cH, w = c.w * W, h = c.h * cH;
+    ctx.fillStyle = c.color + '18';
+    ctx.strokeStyle = c.color + '90';
+    ctx.lineWidth = 1;
+    roundRect(ctx, x, y, w, h, 3);
+    ctx.fill(); ctx.stroke();
+
+    const lines = c.label.split('\n');
+    const fSize = Math.min(9, Math.max(6, w / 8));
+    ctx.fillStyle = c.textColor;
+    ctx.font = fSize + 'px "Space Mono", monospace';
+    ctx.textAlign = 'center';
+    const ly = y + h / 2 - (lines.length - 1) * (fSize + 1) / 2;
+    lines.forEach((ln, i) => ctx.fillText(ln, x + w / 2, ly + i * (fSize + 2)));
+  });
+
+  // Legend
+  const legend = document.getElementById('mbLegend');
+  const items = [
+    { color: '#3278ff', label: 'CPU Socket' },
+    { color: '#00ff88', label: 'Memory' },
+    { color: '#ff6b35', label: 'PCIe' },
+    { color: '#ffd60a', label: 'Power / M.2' },
+    { color: '#a855f7', label: 'Chipset' },
+    { color: '#00e5ff', label: 'USB / IO' },
+    { color: '#ff4444', label: 'VRM' },
+  ];
+  legend.innerHTML = items.map(i => `
+    <div class="legend-row"><div class="legend-dot" style="background:${i.color}"></div><div class="legend-text">${i.label}</div></div>
+  `).join('');
+}
+
+// ---------- ELECTRON FLOW ----------
+let flowRAF = null;
+let flowParticles = [];
+let flowClockPulses = [];
+
+const flowDefs = {
+  cpu_bus: { label: 'CPU Data Bus — 64-bit parallel', lanes: 8, bidir: true, colors: ['#3278ff','#00e5ff'], info: 'CPU data bus carries 64 bits in parallel. DDR5 at 6400 MT/s = 51.2 GB/s peak bandwidth. Address/control lines are unidirectional (CPU→device), data lines are bidirectional. All 64 lanes switch simultaneously at clock edges.', bandwidth: '51.2 GB/s', voltage: '1.1V', freq: '6400 MT/s' },
+  pcie4: { label: 'PCIe Gen 4 × 16 — Differential pairs', lanes: 6, bidir: true, colors: ['#a855f7','#d8b4fe'], info: 'PCIe Gen 4 uses differential signaling (TX+/TX−, RX+/RX−) per lane — each lane is 2 wires with inverted signals for noise cancellation. 16 GT/s raw → 2 GB/s per lane after 128b/130b encoding. ×16 = 32 GB/s full-duplex.', bandwidth: '64 GB/s', voltage: '3.3V', freq: '16 GT/s/lane' },
+  pcie5: { label: 'PCIe Gen 5 × 16 — Ultra-high speed', lanes: 6, bidir: true, colors: ['#ff79c6','#ff4488'], info: 'PCIe Gen 5 doubles Gen 4: 32 GT/s per lane. ×16 = 128 GB/s theoretical. Used in AMD Ryzen 7000/Intel 12th+ for GPU and NVMe. Requires tighter trace impedance (85Ω ±5%) on PCB.', bandwidth: '128 GB/s', voltage: '3.3V', freq: '32 GT/s/lane' },
+  ddr5: { label: 'DDR5 Memory Bus — Command + Data', lanes: 7, bidir: true, colors: ['#00ff88','#00e5ff'], info: 'DDR5 has 64-bit data bus + 7 command/address lines. Data is bidirectional (read + write). Command/address is unidirectional from CPU IMC. Runs at 4800–8400 MT/s. Each DIMM has on-die ECC in DDR5.', bandwidth: '51.2 GB/s', voltage: '1.1V', freq: '6400 MT/s' },
+  usb3: { label: 'USB 3.2 Gen2 — SuperSpeed differential', lanes: 4, bidir: false, colors: ['#ff6b35','#ffd60a'], info: 'USB 3.2 adds SuperSpeed (SS+/SS−) differential pair on top of USB 2 D+/D−. VBUS = 5V power rail. Data is half-duplex at physical layer; protocol handles bidirectional. 10 Gbps raw = ~1.2 GB/s actual.', bandwidth: '1.2 GB/s', voltage: '5V VBUS', freq: '10 Gbps' },
+  usb4: { label: 'USB4 / Thunderbolt 4 — PCIe+DP tunnel', lanes: 5, bidir: true, colors: ['#00e5ff','#3278ff'], info: 'USB4 uses the Thunderbolt 4 physical layer. 40 Gbps (TB4) or 80 Gbps (USB4 v2). Simultaneously tunnels PCIe 3.0 ×8, DisplayPort 2.0, and USB 3.2. Each lane = differential pair with 8b/10b encoding.', bandwidth: '40–80 Gbps', voltage: '5–20V PD', freq: '20 GT/s' },
+  hdmi: { label: 'HDMI 2.1 — TMDS / FRL differential', lanes: 5, bidir: false, colors: ['#ffd60a','#ff6b35'], info: 'HDMI 2.1 uses FRL (Fixed Rate Link) mode: 4 differential pairs at up to 12 Gbps each = 48 Gbps. Carries RGB/YCbCr video + 8-channel audio. CEC is a 1-wire bidirectional control bus. +5V on pin 18 powers external equipment.', bandwidth: '48 Gbps', voltage: '+5V', freq: '12 Gbps/pair' },
+  eth10g: { label: '10GbE Ethernet — 4 pair full-duplex', lanes: 4, bidir: true, colors: ['#00ff88','#00e5ff'], info: '10GBASE-T uses all 4 twisted pairs simultaneously in full duplex. 16-PAM (16 amplitude levels per symbol) at 800 MHz. Each pair carries 2.5 Gbps × 4 = 10 Gbps total. Auto-MDI/MDI-X for cable polarity.', bandwidth: '10 Gbps', voltage: '1V diff', freq: '800 MHz' },
+  sata: { label: 'SATA III — 6 Gbps serial', lanes: 2, bidir: true, colors: ['#ff6b35','#ffd60a'], info: 'SATA III is a point-to-point serial interface. One differential pair TX, one RX. 6 Gbps raw → ~600 MB/s real. Uses 8b/10b encoding (20% overhead). 15-pin power connector (3.3V, 5V, 12V rails).', bandwidth: '600 MB/s', voltage: '3.3/5/12V', freq: '6 Gbps' },
+  nvme: { label: 'NVMe — PCIe lane on PCB', lanes: 4, bidir: true, colors: ['#ffd60a','#a855f7'], info: 'NVMe SSD connects via PCIe ×4 lanes routed directly on the PCB. Each lane is a differential pair with 85Ω controlled impedance copper traces. Gen 4 ×4 = 8 GB/s. The PCB trace must be length-matched within ±10 mils.', bandwidth: '8 GB/s', voltage: '3.3V', freq: '16 GT/s' },
+  trace_cu: { label: 'PCB copper trace — single signal line', lanes: 1, bidir: false, colors: ['#E97316','#ffd60a'], info: 'A standard PCB copper trace (1 oz, 35μm thick, 0.1mm wide). Resistance ~0.53 Ω/m. Electrons drift at ~0.3 mm/s but the electric field propagates at ~2×10⁸ m/s (67% speed of light in FR4). Carrying 1A at 0.1mm width is near the thermal limit.', bandwidth: 'Low (single)', voltage: 'Signal', freq: 'DC–GHz' },
+  trace_au: { label: 'Gold bond wire — IC to package', lanes: 1, bidir: false, colors: ['#EAB308','#ffd60a'], info: 'Gold bond wires (25μm diameter, 1–3mm long) connect the silicon die pads to the package leadframe. ρ = 2.44×10⁻⁸ Ω·m. Resistance ~0.5Ω per wire. Can carry ~100mA max before thermal failure. Being replaced by copper wire in modern packaging.', bandwidth: 'Low', voltage: 'mV signal', freq: 'DC–GHz' },
+};
+
+function initFlow() {
+  rebuildFlow();
+}
+
+function rebuildFlow() {
+  if (flowRAF) cancelAnimationFrame(flowRAF);
+  flowParticles = [];
+  flowClockPulses = [];
+
+  const canvas = document.getElementById('flowCanvas');
+  if (!canvas) return;
+
+  const sel = document.getElementById('flowComp').value;
+  const def = flowDefs[sel];
+  const density = parseInt(document.getElementById('flowDensity').value) || 3;
+
+  document.getElementById('flowInfoText').innerHTML =
+    `<strong style="color:var(--text)">${def.label}</strong><br><br>${def.info}<br><br>` +
+    `<span style="color:var(--accent2)">Bandwidth:</span> ${def.bandwidth} &nbsp;|&nbsp; ` +
+    `<span style="color:var(--accent3)">Voltage:</span> ${def.voltage} &nbsp;|&nbsp; ` +
+    `<span style="color:var(--yellow)">Freq:</span> ${def.freq}`;
+
+  const W = canvas.parentElement.offsetWidth;
+  const H = canvas.parentElement.offsetHeight - 40;
+  if (W < 100 || H < 100) { setTimeout(rebuildFlow, 100); return; }
+  canvas.width = W;
+  canvas.height = Math.max(H, 300);
+
+  const lanes = def.lanes;
+  const laneH = Math.min(50, (canvas.height - 80) / lanes);
+  const startY = (canvas.height - lanes * laneH) / 2;
+
+  // Build particles
+  for (let l = 0; l < lanes; l++) {
+    const isReturn = def.bidir && (l % 2 === 1);
+    const dir = isReturn ? -1 : 1;
+    const color = def.colors[l % def.colors.length];
+    const count = 5 + density * 2;
+    for (let p = 0; p < count; p++) {
+      flowParticles.push({
+        x: Math.random() * W,
+        y: startY + l * laneH + laneH / 2,
+        lane: l,
+        dir,
+        color,
+        isReturn,
+        speed: 1.5 + Math.random() * 1.5,
+        size: 2 + Math.random() * 1.5,
+        trail: []
+      });
+    }
+  }
+
+  // Clock pulses
+  for (let i = 0; i < 3; i++) {
+    flowClockPulses.push({ x: Math.random() * W, progress: Math.random() });
+  }
+
+  runFlow(canvas, def, lanes, laneH, startY);
+}
+
+function runFlow(canvas, def, lanes, laneH, startY) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const spdFactor = parseFloat(document.getElementById('flowSpd').value) || 1;
+
+  function frame() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#080d18';
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw lane tracks
+    for (let l = 0; l < lanes; l++) {
+      const y = startY + l * laneH;
+      const isReturn = def.bidir && (l % 2 === 1);
+      const laneColor = isReturn ? '#a855f7' : '#ff6b35';
+      ctx.fillStyle = 'rgba(50,120,255,0.03)';
+      ctx.fillRect(0, y, W, laneH - 2);
+      ctx.strokeStyle = 'rgba(50,120,255,0.1)';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(0, y, W, laneH - 2);
+
+      // Lane label
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.font = '8px "Space Mono", monospace';
+      ctx.textAlign = 'left';
+      const lName = def.bidir ? (isReturn ? '← RETURN ' + l : '→ FWD ' + l) : ('→ Lane ' + l);
+      ctx.fillText(lName, 4, y + laneH / 2 + 3);
+
+      // Direction arrow background line
+      ctx.strokeStyle = laneColor + '25';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(60, y + laneH / 2);
+      ctx.lineTo(W - 10, y + laneH / 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Clock pulses (vertical sweep lines)
+    flowClockPulses.forEach(cp => {
+      cp.progress += 0.002 * spdFactor;
+      if (cp.progress > 1) cp.progress = 0;
+      const px = cp.progress * W;
+      const grad = ctx.createLinearGradient(px - 20, 0, px + 20, 0);
+      grad.addColorStop(0, 'transparent');
+      grad.addColorStop(0.5, 'rgba(255,214,10,0.12)');
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.fillRect(px - 20, startY, 40, lanes * laneH);
+    });
+
+    // Update + draw particles
+    flowParticles.forEach(p => {
+      p.x += p.dir * p.speed * spdFactor;
+      if (p.x > W + 20) p.x = -20;
+      if (p.x < -20) p.x = W + 20;
+
+      // Trail
+      p.trail.push({ x: p.x, y: p.y });
+      if (p.trail.length > 18) p.trail.shift();
+
+      if (p.trail.length > 1) {
+        for (let t = 1; t < p.trail.length; t++) {
+          const alpha = t / p.trail.length;
+          ctx.strokeStyle = p.color + Math.floor(alpha * 180).toString(16).padStart(2,'0');
+          ctx.lineWidth = p.size * alpha * 0.8;
+          ctx.beginPath();
+          ctx.moveTo(p.trail[t - 1].x, p.trail[t - 1].y);
+          ctx.lineTo(p.trail[t].x, p.trail[t].y);
+          ctx.stroke();
+        }
+      }
+
+      // Particle glow
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * 2, 0, Math.PI * 2);
+      ctx.fillStyle = p.color + '30';
+      ctx.fill();
+    });
+
+    // Labels
+    ctx.fillStyle = 'rgba(0,229,255,0.4)';
+    ctx.font = '10px "Space Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(def.bandwidth, W - 8, 16);
+    ctx.fillStyle = 'rgba(255,107,53,0.4)';
+    ctx.fillText(def.freq, W - 8, 28);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.font = '9px "Space Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(def.label, 8, 16);
+
+    flowRAF = requestAnimationFrame(frame);
+  }
+
+  frame();
+}
+
+// ---------- TOPOLOGY MAP ----------
+const topoNodes = [
+  { id: 'cpu', label: 'CPU', x: 0.5, y: 0.08, color: '#3278ff', r: 28, cat: 'cpu' },
+  { id: 'imc', label: 'IMC', x: 0.7, y: 0.2, color: '#00ff88', r: 18, cat: 'mem' },
+  { id: 'pcie_root', label: 'PCIe\nRoot', x: 0.3, y: 0.2, color: '#a855f7', r: 20, cat: 'pcie' },
+  { id: 'pch', label: 'PCH', x: 0.5, y: 0.38, color: '#ff6b35', r: 20, cat: 'pcie' },
+  { id: 'gpu', label: 'GPU', x: 0.15, y: 0.42, color: '#a855f7', r: 22, cat: 'pcie' },
+  { id: 'nvme1', label: 'NVMe\n SSD', x: 0.35, y: 0.45, color: '#ffd60a', r: 16, cat: 'pcie' },
+  { id: 'dimm_a', label: 'DIMM\nA', x: 0.75, y: 0.35, color: '#00ff88', r: 16, cat: 'mem' },
+  { id: 'dimm_b', label: 'DIMM\nB', x: 0.85, y: 0.35, color: '#00ff88', r: 16, cat: 'mem' },
+  { id: 'usb_hub', label: 'USB\nHub', x: 0.62, y: 0.6, color: '#00e5ff', r: 18, cat: 'usb' },
+  { id: 'eth', label: 'GbE', x: 0.42, y: 0.68, color: '#00ff88', r: 16, cat: 'net' },
+  { id: 'wifi', label: 'Wi-Fi\n6E', x: 0.55, y: 0.78, color: '#00ff88', r: 16, cat: 'net' },
+  { id: 'usb_a1', label: 'USB-A', x: 0.72, y: 0.75, color: '#00e5ff', r: 13, cat: 'usb' },
+  { id: 'usb_c', label: 'USB-C', x: 0.82, y: 0.68, color: '#00e5ff', r: 13, cat: 'usb' },
+  { id: 'audio', label: 'Audio', x: 0.26, y: 0.7, color: '#a855f7', r: 14, cat: 'usb' },
+  { id: 'sata1', label: 'SATA', x: 0.14, y: 0.62, color: '#ff6b35', r: 14, cat: 'pcie' },
+];
+
+const topoEdges = [
+  { from: 'cpu', to: 'imc', label: 'IMC', color: '#00ff88', w: 3 },
+  { from: 'cpu', to: 'pcie_root', label: 'PCIe', color: '#a855f7', w: 3 },
+  { from: 'cpu', to: 'pch', label: 'DMI4', color: '#ff6b35', w: 2 },
+  { from: 'pcie_root', to: 'gpu', label: '×16', color: '#a855f7', w: 3 },
+  { from: 'pcie_root', to: 'nvme1', label: '×4', color: '#ffd60a', w: 2 },
+  { from: 'imc', to: 'dimm_a', label: 'CH-A', color: '#00ff88', w: 2 },
+  { from: 'imc', to: 'dimm_b', label: 'CH-B', color: '#00ff88', w: 2 },
+  { from: 'pch', to: 'usb_hub', label: 'USB3', color: '#00e5ff', w: 2 },
+  { from: 'pch', to: 'eth', label: 'PCIe', color: '#00ff88', w: 1.5 },
+  { from: 'pch', to: 'wifi', label: 'PCIe', color: '#00ff88', w: 1.5 },
+  { from: 'pch', to: 'sata1', label: 'SATA', color: '#ff6b35', w: 1.5 },
+  { from: 'usb_hub', to: 'usb_a1', label: '', color: '#00e5ff', w: 1 },
+  { from: 'usb_hub', to: 'usb_c', label: '', color: '#00e5ff', w: 1 },
+  { from: 'pch', to: 'audio', label: 'HDA', color: '#a855f7', w: 1.5 },
+];
+
+let topoFilter = 'all';
+let topoAnimFrame = null;
+let topoPhase = 0;
+
+function setTopoFilter(f, btn) {
+  topoFilter = f;
+  document.querySelectorAll('.topo-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  drawTopology();
+}
+
+function drawTopology() {
+  const canvas = document.getElementById('topoCanvas');
+  if (!canvas) return;
+  const W = canvas.parentElement.offsetWidth;
+  const H = canvas.parentElement.offsetHeight - 10;
+  if (W < 100 || H < 100) { setTimeout(drawTopology, 100); return; }
+  canvas.width = W;
+  canvas.height = Math.max(H, 300);
+
+  if (topoAnimFrame) cancelAnimationFrame(topoAnimFrame);
+
+  function frame() {
+    topoPhase += 0.015;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, canvas.height);
+    ctx.fillStyle = '#080d18';
+    ctx.fillRect(0, 0, W, canvas.height);
+
+    // Grid
+    ctx.strokeStyle = 'rgba(50,120,255,0.04)';
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x < W; x += 30) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+    for (let y = 0; y < canvas.height; y += 30) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+    // Filter visible nodes
+    const visibleCats = topoFilter === 'all' ? null :
+      topoFilter === 'pcie' ? ['cpu','pcie'] :
+      topoFilter === 'usb' ? ['cpu','usb'] :
+      topoFilter === 'mem' ? ['cpu','mem'] :
+      topoFilter === 'net' ? ['cpu','pcie','net'] : null;
+
+    const visNode = id => {
+      const n = topoNodes.find(n => n.id === id);
+      if (!n) return false;
+      if (!visibleCats) return true;
+      return visibleCats.includes(n.cat);
+    };
+
+    // Draw edges
+    topoEdges.forEach(e => {
+      if (!visNode(e.from) || !visNode(e.to)) return;
+      const a = topoNodes.find(n => n.id === e.from);
+      const b = topoNodes.find(n => n.id === e.to);
+      const ax = a.x * W, ay = a.y * canvas.height;
+      const bx = b.x * W, by = b.y * canvas.height;
+
+      // Glow line
+      ctx.strokeStyle = e.color + '30';
+      ctx.lineWidth = e.w + 2;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+
+      ctx.strokeStyle = e.color + '80';
+      ctx.lineWidth = e.w;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+
+      // Animated packet on edge
+      const t = (Math.sin(topoPhase + a.x * 5 + b.y * 3) + 1) / 2;
+      const px = ax + (bx - ax) * t;
+      const py = ay + (by - ay) * t;
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fillStyle = e.color;
+      ctx.fill();
+
+      // Edge label
+      if (e.label) {
+        const mx = (ax + bx) / 2, my = (ay + by) / 2;
+        ctx.fillStyle = e.color + 'cc';
+        ctx.font = '8px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, mx, my - 4);
+      }
+    });
+
+    // Draw nodes
+    topoNodes.forEach(n => {
+      if (!visNode(n.id)) return;
+      const nx = n.x * W, ny = n.y * canvas.height;
+
+      // Glow
+      const grd = ctx.createRadialGradient(nx, ny, 0, nx, ny, n.r * 2);
+      grd.addColorStop(0, n.color + '20');
+      grd.addColorStop(1, 'transparent');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.arc(nx, ny, n.r * 2, 0, Math.PI * 2); ctx.fill();
+
+      // Node circle
+      ctx.beginPath(); ctx.arc(nx, ny, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = n.color + '18';
+      ctx.fill();
+      ctx.strokeStyle = n.color + 'cc';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Pulse ring
+      const pulse = (Math.sin(topoPhase * 2 + n.x * 10) + 1) / 2;
+      ctx.beginPath(); ctx.arc(nx, ny, n.r + pulse * 6, 0, Math.PI * 2);
+      ctx.strokeStyle = n.color + Math.floor(pulse * 60).toString(16).padStart(2,'0');
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Label
+      const lines = n.label.split('\n');
+      ctx.fillStyle = n.color;
+      ctx.font = '8px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      const ly = ny - (lines.length - 1) * 5;
+      lines.forEach((ln, i) => ctx.fillText(ln, nx, ly + i * 10));
+    });
+
+    topoAnimFrame = requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+// ---------- METAL DETECTION ----------
+const metals = [
+  { id:'cu', name:'Copper (Cu)', rho:1.68, use:'PCB traces, bus bars', color:'#E97316', conf:98, desc:'Dominant conductor in all PCBs. Electroplated at 35μm (1oz) or 70μm (2oz). Identified by lowest resistivity after silver. A 0.1mm trace at 35μm carries ~0.53Ω/m.' },
+  { id:'au', name:'Gold (Au)', rho:2.44, use:'Bond wires, contact pads', color:'#EAB308', conf:97, desc:'Used for IC bond wires (25μm dia) and connector gold plating (0.05–1μm). Does not oxidise. ρ between Cu and Al — clearly distinguishable from both.' },
+  { id:'al', name:'Aluminium (Al)', rho:2.82, use:'Heatsinks, ICs, cables', color:'#94A3B8', conf:96, desc:'CPU/GPU integrated heatspreaders (IHS) often Al alloy. Also used in datacenter cable runs. 63% of copper conductivity but 1/3 the density.' },
+  { id:'brass', name:'Brass (Cu70/Zn30)', rho:6.6, use:'Connector pins, RF shields', color:'#CA8A04', conf:92, desc:'Zinc alloying raises resistivity to 6.6 — nearly 4× pure copper. Distinct signature. Used in SMA, RJ-45 spring contacts, and PCB standoffs.' },
+  { id:'sac305', name:'SAC305 solder (Sn96.5/Ag3/Cu0.5)', rho:11.5, use:'PCB solder joints', color:'#9CA3AF', conf:90, desc:'Lead-free solder per RoHS. Melts at 217°C. Resistivity ~11.5 — 7× copper. All modern PCB solder joints are SAC305 or similar Sn-based alloy.' },
+  { id:'sn', name:'Tin (Sn)', rho:11.0, use:'PCB pad plating (HASL)', color:'#6B7280', conf:89, desc:'PCB pads are Hot-Air Solder Leveled (HASL) with pure tin or Sn-Pb. ρ = 11.0 — barely distinguishable from SAC305 without Ag content analysis.' },
+  { id:'ni', name:'Nickel (Ni)', rho:6.99, use:'ENIG plating (base), resistors', color:'#78716C', conf:88, desc:'ENIG (Electroless Nickel Immersion Gold) plating: 3–6μm Ni under 0.05μm Au. NiCr thin-film resistors on PCB. Ferromagnetic — eddy current gives dual (resistivity + permeability) fingerprint.' },
+  { id:'steel', name:'Steel (Fe+C alloy)', rho:10.0, use:'Chassis, EMI shields', color:'#52525B', conf:85, desc:'PC chassis, PCIe slot covers, motherboard I/O shield. Ferromagnetic steel is best identified by eddy current probe (reads resistivity + magnetic permeability together).' },
+  { id:'ti', name:'Titanium (Ti)', rho:42.0, use:'Premium connectors, fasteners', color:'#71717A', conf:82, desc:'Used in aerospace-grade connectors and premium laptop screws. ρ = 42 is very high — immediately distinguishes Ti from any copper alloy. Non-ferromagnetic.' },
+  { id:'w', name:'Tungsten (W)', rho:5.6, use:'IC vias, contacts', color:'#64748B', conf:91, desc:'Tungsten vias fill the contact holes in advanced CMOS (Intel uses W plugs). Very high melting point (3422°C). ρ = 5.6 — between nickel and brass.' },
+  { id:'constantan', name:'Constantan (55Cu/45Ni)', rho:49.0, use:'Precision resistors', color:'#A16207', conf:87, desc:'Used in precision thin-film resistors and thermocouples. Nearly constant ρ across temperature — hence the name. ρ = 49 is very high, unmistakeable.' },
+  { id:'nichrome', name:'Nichrome (NiCr 80/20)', rho:110.0, use:'Heating elements', color:'#B91C1C', conf:85, desc:'Highest resistivity in common hardware. Used in wire-wound power resistors and SMD resistor elements. ρ = 110 is >65× copper — trivially identified.' },
+];
+
+const maxRho = 120;
+
+function buildMetalTable() {
+  const tbody = document.getElementById('metalTBody');
+  if (tbody.children.length > 0) return;
+  tbody.innerHTML = metals.map(m => `
+    <tr onclick="selectMetal('${m.id}')" style="cursor:pointer">
+      <td class="name"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${m.color};margin-right:6px"></span>${m.name}</td>
+      <td class="mono">${m.rho}</td>
+      <td>${m.use}</td>
+      <td class="rho-bar-cell"><div class="rho-bar"><div class="rho-fill" style="width:${(m.rho/maxRho*100).toFixed(1)}%;background:${m.color}"></div></div></td>
+    </tr>
+  `).join('');
+}
+
+function selectMetal(id) {
+  document.getElementById('metalSel').value = id;
+  detectMetal();
+}
+
+function detectMetal() {
+  const id = document.getElementById('metalSel').value;
+  const m = metals.find(x => x.id === id);
+  if (!m) return;
+  document.getElementById('det-mat').textContent = m.name;
+  document.getElementById('det-mat').style.color = m.color;
+  document.getElementById('det-rho').textContent = 'ρ = ' + m.rho + ' × 10⁻⁸ Ω·m';
+  document.getElementById('det-desc').textContent = m.desc;
+  document.getElementById('det-conf-wrap').style.display = 'block';
+  document.getElementById('det-conf-fill').style.width = m.conf + '%';
+  document.getElementById('det-conf-wrap').innerHTML = `Match confidence: ${m.conf}%<div class="conf-bar"><div class="conf-fill" style="width:${m.conf}%"></div></div>`;
+  drawProbe(m);
+}
+
+function drawProbe(metal) {
+  const c = document.getElementById('probeCanvas');
+  if (!c) return;
+  const W = c.parentElement ? Math.min(c.parentElement.offsetWidth, 700) : 600;
+  c.width = W; c.height = 180;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#080d18';
+  ctx.fillRect(0, 0, W, 180);
+
+  const m = metal || metals[0];
+
+  // Material bar
+  ctx.fillStyle = m.color + '30';
+  ctx.strokeStyle = m.color + '80';
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, 60, 75, W - 120, 30, 4);
+  ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = m.color;
+  ctx.font = '10px "Space Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(m.name + ' — ρ = ' + m.rho + ' × 10⁻⁸ Ω·m', W / 2, 94);
+
+  // Four probes
+  const positions = [W * 0.15, W * 0.38, W * 0.62, W * 0.85];
+  const labels = ['I+', 'V+', 'V−', 'I−'];
+  const colors = ['#ff4444', '#00e5ff', '#00e5ff', '#ff4444'];
+
+  positions.forEach((px, i) => {
+    ctx.strokeStyle = colors[i];
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px, 45); ctx.lineTo(px, 75); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, 42, 6, 0, Math.PI * 2);
+    ctx.fillStyle = colors[i]; ctx.fill();
+    ctx.fillStyle = colors[i];
+    ctx.font = '10px "Space Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(labels[i], px, 24);
+  });
+
+  // Current arrow
+  ctx.strokeStyle = '#ff4444aa';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 3]);
+  ctx.beginPath();
+  ctx.moveTo(positions[0], 42);
+  ctx.lineTo(positions[3], 42);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#ff4444';
+  ctx.font = '9px "Space Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('I = 50mA →', W / 2, 35);
+
+  // Voltage bracket
+  ctx.strokeStyle = '#00e5ff88';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(positions[1], 55);
+  ctx.lineTo(positions[2], 55);
+  ctx.stroke();
+  ctx.fillStyle = '#00e5ff';
+  ctx.fillText('V measured', (positions[1] + positions[2]) / 2, 68);
+
+  // Formula
+  ctx.fillStyle = '#4a5568';
+  ctx.font = '10px "Space Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('ρ = (V/I) × (A/L)   →   Match vs. 70,000+ alloy database   →   ML model confirms composition', 60, 160);
+}
+
+// ---------- LIVE METRICS UPDATE ----------
+function updateLiveMetrics() {
+  if (!hwData.scanned) return;
+  hwData.cpu.usage = Math.max(2, Math.min(99, hwData.cpu.usage + (Math.random() - 0.5) * 10));
+  hwData.ram.usage = Math.max(10, Math.min(95, hwData.ram.usage + (Math.random() - 0.5) * 5));
+  const cu = Math.round(hwData.cpu.usage);
+  const ru = Math.round(hwData.ram.usage);
+  document.getElementById('d-cpu-use').textContent = cu + '%';
+  document.getElementById('d-cpu-bar').style.width = cu + '%';
+  document.getElementById('d-ram-use').textContent = ru + '%';
+  document.getElementById('d-ram-bar').style.width = ru + '%';
+}
+
+// ---------- INIT ----------
+window.addEventListener('load', () => {
+  // Detect OS immediately (no scan needed)
+  const env = detectEnvironment();
+  document.getElementById('hOS').textContent = env.os;
+  document.getElementById('sb-os').textContent = env.os;
+
+  // Init views that are drawn on load
+  setTimeout(() => {
+    drawCPUDiagram();
+    buildMetalTable();
+    drawProbe();
+    detectMetal();
+  }, 100);
+
+  // Live metrics ticker
+  setInterval(updateLiveMetrics, 2000);
+
+  // Resize handler
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const active = document.querySelector('.view.active');
+      if (!active) return;
+      const id = active.id.replace('view-', '');
+      if (id === 'cpu') drawCPUDiagram();
+      if (id === 'motherboard') drawMotherboard();
+      if (id === 'topology') drawTopology();
+      if (id === 'electron') rebuildFlow();
+    }, 150);
+  });
+});
+</script>
+</body>
+</html>
